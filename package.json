@@ -1,0 +1,15 @@
+{
+  "name": "sap-bridge",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@sap/hana-client": "^2.25.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
