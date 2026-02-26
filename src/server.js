@@ -45,6 +45,32 @@ app.post('/customer/lookup', async (req, res) => {
   }
 });
 
+// webhook: external api -> our bridge
+app.post('/quote/webhook', async (req, res) => {
+  try {
+    const token = req.headers['x-webhook-token'];
+    if (!token || token !== process.env.WEBHOOK_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'UNAUTHORIZED_WEBHOOK' });
+    }
+
+    const { transitionId, status, result } = req.body || {};
+    if (!transitionId) {
+      return res.status(400).json({ ok: false, error: 'MISSING_TRANSITION_ID' });
+    }
+
+    // TODO: aqui você salva em memória/redis/banco
+    // transitions.set(transitionId, { status, result, updatedAt: new Date().toISOString() });
+
+    console.log('[webhook] received', { transitionId, status });
+
+    // responda rápido
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('webhook error:', err);
+    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
+  }
+});
+
 app.listen(APP.port, () => {
   console.log(`[sap-bridge] listening on port ${APP.port}`);
 });
