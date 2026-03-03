@@ -24,6 +24,18 @@ async function queryOne(sql, params = []) {
   }
 }
 
+async function queryAll(sql, params = []) {
+  const conn = hanaClient.createConnection();
+  await new Promise((res, rej) => conn.connect(connParams(), (e) => (e ? rej(e) : res())));
+  try {
+    const stmt = conn.prepare(sql);
+    const rows = await new Promise((res, rej) => stmt.exec(params, (e, rs) => (e ? rej(e) : res(rs))));
+    return Array.isArray(rows) ? rows : [];
+  } finally {
+    try { conn.disconnect(); } catch {}
+  }
+}
+
 export async function getCardCodeByCNPJ_HANA(cnpjInput) {
   const digits = normalizeCNPJNumeric(cnpjInput || '');
   if (digits.length !== 14) return null;
@@ -58,4 +70,40 @@ export async function getCardCodeByCNPJ_HANA(cnpjInput) {
   );
 
   return rowDigits?.CardCode || null;
+}
+
+export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
+  const aro = String(aroInput || "").replace(/\D/g, "");
+  if (!aro) return [];
+
+  const medida = String(medidaInput || "")
+    .replace(/\//g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!medida) return [];
+
+  const aroPattern = `${aro}" %`;
+  const medidaPattern = `% ${medida} %`;
+
+  const sql = `
+    SELECT DISTINCT
+      T0."ItemCode",
+      T0."U_SX_Marca",
+      T0."ItemName"
+    FROM OITM T0
+    WHERE
+      T0."ItemName" LIKE ?
+      AND T0."ItemName" LIKE ?
+      AND IFNULL(T0."U_SX_Marca",'') <> ''
+    ORDER BY
+      T0."U_SX_Marca",
+      T0."ItemCode"
+    LIMIT 100
+  `;
+
+  // aqui você pode reaproveitar seu query executor (queryOne/queryAll)
+  // se você só tem queryOne hoje, crie um queryAll (mesma ideia mas retorna array)
+  const rows = await queryAll(sql, [aroPattern, medidaPattern]);
+  return rows || [];
 }
