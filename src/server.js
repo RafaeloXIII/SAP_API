@@ -169,6 +169,9 @@ app.post("/products/search-tires", async (req, res) => {
         marca: r.U_SX_Marca,
         nome: r.ItemName,
       })),
+      mensagem: `Temos as seguintes opções de pneus para o ${aro} e ${medida} informados:
+      ${(rows || []).map(r => `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`).join('\n')}.
+       Por favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
     });
   } catch (err) {
     console.error("search tires error:", err);
