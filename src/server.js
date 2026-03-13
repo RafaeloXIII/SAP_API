@@ -4,7 +4,7 @@ import crypto from "crypto";
 import axios from "axios";
 
 import { APP } from "../config/env.js";
-import { getCardCodeByCNPJ_HANA, searchTiresByAroMedida_HANA } from "../db/hana.js";
+import { getCardCodeByCNPJ_HANA, searchTiresByAroMedida_HANA, getTireByItemCode_HANA,getProductInfoFromProc_HANA} from "../db/hana.js";
 import { normalizeCNPJNumeric } from "../utils/cnpj.js";
 
 const app = express();
@@ -179,6 +179,32 @@ app.post("/products/search-tires", async (req, res) => {
   }
 });
 
+app.get("/products/item/:itemCode", async (req, res) => {
+  try {
+    const itemCode = req.params?.itemCode;
+    if (!itemCode || String(itemCode).trim().length === 0) {
+      return res.status(400).json({ ok: false, error: "MISSING_ITEMCODE" });
+    }
+
+    const row = await getProductInfoFromProc_HANA(itemCode);
+
+    if (!row) {
+      return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    }
+
+    // Por enquanto devolvo "data" com tudo que a procedure retornar.
+    // Depois, se você me mandar as colunas, eu mapeio pra um JSON mais limpo.
+    return res.status(200).json({
+      ok: true,
+      itemCode: String(itemCode),
+      data: row,
+    });
+  } catch (err) {
+    console.error("product proc error:", err);
+    return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
+  }
+});
+
 /**
  * POST /budget/start
  * - Agora envia somente (cardCode + itemCode) para a API externa
@@ -190,36 +216,47 @@ app.post("/products/search-tires", async (req, res) => {
  */
 app.post("/budget/start", async (req, res) => {
   try {
-    const { cardCode, itemCode, clientRef, conversationId } = req.body || {};
+    const cnpj = req.body?.cnpj;
+    const itemCode = req.body?.itemCode;
+    const quantityRaw = req.body?.quantity;
 
-    if (!cardCode || !itemCode) {
-      return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
+    const digits = normalizeCNPJNumeric(cnpj);
+    if (digits.length !== 14) {
+      return res.status(400).json({ ok: false, error: "INVALID_CNPJ" });
     }
 
-    const url = process.env.EXTERNAL_BUDGET_URL;
-    if (!url) {
-      return res.status(500).json({ ok: false, error: "MISSING_EXTERNAL_BUDGET_URL" });
+    if (!itemCode || String(itemCode).trim().length === 0) {
+      return res.status(400).json({ ok: false, error: "MISSING_ITEMCODE" });
     }
 
-    const base =
-      process.env.PUBLIC_BASE_URL?.replace(/\/+$/, "") ||
-      `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}`;
-
-    // payload para a API externa (novo contrato)
-    const payload = {
-      cardCode,
-      itemCode,
-      clientRef: clientRef || conversationId || null,
-      callbackUrl: `${base}/budget/webhook`,
-    };
-
-    const headers = { "Content-Type": "application/json" };
-    if (process.env.EXTERNAL_BUDGET_TOKEN) {
-      headers["Authorization"] = `Bearer ${process.env.EXTERNAL_BUDGET_TOKEN}`;
+    const quantity = Number(quantityRaw ?? 1);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return res.status(400).json({ ok: false, error: "INVALID_QUANTITY" });
     }
 
-    const resp = await axios.post(url, payload, {
-      headers,
+    const baseUrl = process.env.EXTERNAL_BASE_URL;
+    const token = process.env.EXTERNAL_TOKEN;
+
+    if (!baseUrl) {
+      return res.status(500).json({ ok: false, error: "MISSING_EXTERNAL_BASE_URL" });
+    }
+    if (!token) {
+      return res.status(500).json({ ok: false, error: "MISSING_EXTERNAL_TOKEN" });
+    }
+
+    const url = `${baseUrl.replace(/\/+$/, "")}/crmb1/server/api/Order/PostNewQuotationByCNPJ`;
+
+    // API externa exige SEMPRE um array, mesmo com 1 item
+    const body = [
+      {
+        itemcode: String(itemCode).trim(),
+        quantity,
+      },
+    ];
+
+    const resp = await axios.post(url, body, {
+      params: { token, cnpj }, // precisa ir completo
+      headers: { "Content-Type": "application/json" },
       timeout: 15000,
       validateStatus: () => true,
     });
@@ -229,15 +266,35 @@ app.post("/budget/start", async (req, res) => {
         ok: false,
         error: "EXTERNAL_API_ERROR",
         status: resp.status,
+        message: typeof resp.data === "string" ? resp.data.slice(0, 200) : undefined,
       });
     }
 
-    const transitionId = resp.data?.transitionId || resp.data?.id || resp.data?.transactionId || null;
+    // Formato esperado: {"status":"Integrado","error":"","id":699637}
+    const externalStatusText = resp.data?.status ?? null;
+    const externalErrorText = resp.data?.error ?? null;
+    const transitionId = resp.data?.id ?? null;
+
     if (!transitionId) {
-      return res.status(502).json({ ok: false, error: "MISSING_TRANSITION_ID" });
+      return res.status(502).json({
+        ok: false,
+        error: "MISSING_TRANSITION_ID",
+        externalStatus: externalStatusText,
+        externalError: externalErrorText,
+      });
     }
 
-    return res.status(200).json({ ok: true, transitionId, status: "PROCESSING" });
+    // Opcional: se a API externa retornar status != Integrado mas ainda com id, você decide o que fazer
+    // Aqui vamos aceitar e deixar o fluxo seguir.
+    return res.status(200).json({
+      ok: true,
+      transitionId,
+      status: "PROCESSING",
+      external: {
+        status: externalStatusText,
+        error: externalErrorText,
+      },
+    });
   } catch (err) {
     console.error("budget start error:", err);
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
@@ -259,7 +316,7 @@ app.post("/budget/webhook", async (req, res) => {
       return res.status(401).json({ ok: false, error: "UNAUTHORIZED_WEBHOOK" });
     }
 
-    const { transitionId, status, result } = req.body || {};
+    const { transitionId, status, ...result } = req.body || {};
     if (!transitionId) {
       return res.status(400).json({ ok: false, error: "MISSING_TRANSITION_ID" });
     }

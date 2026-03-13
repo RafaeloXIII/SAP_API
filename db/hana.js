@@ -107,3 +107,31 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
   const rows = await queryAll(sql, [aroPattern, medidaPattern]);
   return rows || [];
 }
+
+export async function getTireByItemCode_HANA(itemCode) {
+  const code = String(itemCode || "").trim();
+  if (!code) return null;
+
+  const sql = `
+    SELECT
+      T0."ItemCode",
+      T0."U_SX_Marca",
+      T0."ItemName"
+    FROM OITM T0
+    WHERE T0."ItemCode" = ?
+    LIMIT 1
+  `;
+
+  const row = await queryOne(sql, [code]);
+  return row || null;
+}
+
+export async function getProductInfoFromProc_HANA(itemCode) {
+  const code = String(itemCode || "").trim();
+  if (!code) return null;
+
+  const sql = `CALL "SBO_GPIMPORTS"."spcGPConsultaPrecoSKU"(?)`;
+
+  const rows = await queryAll(sql, [code]);
+  return rows && rows.length ? rows[0] : null;
+}
