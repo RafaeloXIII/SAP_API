@@ -92,18 +92,28 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
       T0."U_SX_Marca",
       T0."ItemName"
     FROM OITM T0
+    LEFT JOIN ITM1 T1 
+      ON T1."ItemCode" = T0."ItemCode"
+    LEFT JOIN OPLN T2 
+      ON T2."ListNum" = T1."PriceList"
     WHERE
       T0."ItemName" LIKE ?
       AND T0."ItemName" LIKE ?
-      AND IFNULL(T0."U_SX_Marca",'') <> ''
+      AND IFNULL(T0."U_SX_Marca", '') <> ''
+      AND T0."SellItem" = 'Y'
+      AND T0."MatType" = 0
+      AND T0."ItmsGrpCod" IN (
+        146, 145, 103, 104, 105, 106, 107, 144,
+        108, 109, 110, 111, 112, 149, 113, 114,
+        115, 116, 117, 118, 119, 120, 121, 122
+      )
+      AND T1."Price" > 0
     ORDER BY
       T0."U_SX_Marca",
       T0."ItemCode"
     LIMIT 100
   `;
 
-  // aqui você pode reaproveitar seu query executor (queryOne/queryAll)
-  // se você só tem queryOne hoje, crie um queryAll (mesma ideia mas retorna array)
   const rows = await queryAll(sql, [aroPattern, medidaPattern]);
   return rows || [];
 }
