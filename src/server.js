@@ -161,10 +161,11 @@ app.post("/products/search-tires", async (req, res) => {
     }
 
     const rows = await searchTiresByAroMedida_HANA(aro, medida);
-    
+
     if (!rows || rows.length === 0) {
       return res.status(404).json({ ok: false, error: "NO_PRODUCTS_FOUND" });
-    } 
+    }
+
     return res.status(200).json({
       ok: true,
       items: (rows || []).map((r) => ({
@@ -172,11 +173,9 @@ app.post("/products/search-tires", async (req, res) => {
         marca: r.U_SX_Marca,
         nome: r.ItemName,
       })),
-      mensagem: `Temos as seguintes opções de pneus para o ${aro} e ${medida} informados:\n${
-        (rows || []).map((r) =>
-          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`
-        ).join('\n')
-      }.\nPor favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
+      mensagem: `Temos as seguintes opções de pneus para o ${aro} e ${medida} informados:
+      ${(rows || []).map(r => `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`).join('\n')}.
+       Por favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
     });
   } catch (err) {
     console.error("search tires error:", err);
@@ -199,10 +198,17 @@ app.get("/products/item/:itemCode", async (req, res) => {
 
     // Por enquanto devolvo "data" com tudo que a procedure retornar.
     // Depois, se você me mandar as colunas, eu mapeio pra um JSON mais limpo.
+    const formatted = Object.fromEntries(
+      Object.entries(row).map(([k, v]) => [
+        k,
+        typeof v === "number" ? parseFloat(v.toFixed(2)) : v,
+      ])
+    );
+
     return res.status(200).json({
       ok: true,
       itemCode: String(itemCode),
-      data: row,
+      data: formatted,
     });
   } catch (err) {
     console.error("product proc error:", err);
