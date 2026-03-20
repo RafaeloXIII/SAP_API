@@ -205,7 +205,7 @@ app.post("/products/search-tires", async (req, res) => {
             : "N/A";
           // Corta tudo até após ZRxx ou Rxx + índice de carga: '13" 175 70 R13 82T ' -> 'REFLEX RH01'
           const nomeSimples = r.ItemName.replace(/^.*?Z?R\d+\s+/i, "").trim();
-          return `Marca: ${r.U_SX_Marca} - Nome: ${nomeSimples} - Preço Unitário: ${precoStr}`;
+          return `${r.U_SX_Marca} - ${nomeSimples}\nPreço Unitário: ${precoStr}\n`;
         }).join("\n")
       }`,
     });
