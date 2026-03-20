@@ -189,10 +189,11 @@ app.post("/products/search-tires", async (req, res) => {
         itemCode: r.ItemCode,
         marca: r.U_SX_Marca,
         nome: r.ItemName,
+        valorUnitario: r.PrecoRevenda !== null && r.PrecoRevenda !== undefined
       })),
       mensagem: `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
         (rows || []).map((r) =>
-          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`
+          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName} - Valor Unitário: ${r.PrecoRevenda !== null && r.PrecoRevenda !== undefined ? r.PrecoRevenda.toFixed(2) : "N/A"}`
         ).join("\n")
       }.\n`,
     });
