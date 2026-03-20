@@ -195,7 +195,7 @@ app.post("/products/search-tires", async (req, res) => {
             : "";
           return `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}${preco}`;
         }).join("\n")
-      }.\nPor favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
+      }.\n`,
     });
   } catch (err) {
     console.error("search tires error:", err);
