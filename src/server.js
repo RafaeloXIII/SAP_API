@@ -184,11 +184,17 @@ app.post("/products/search-tires", async (req, res) => {
         itemCode: r.ItemCode,
         marca: r.U_SX_Marca,
         nome: r.ItemName,
+        valorUnitario: r.PrecoRevenda !== null && r.PrecoRevenda !== undefined
+          ? parseFloat(parseFloat(r.PrecoRevenda).toFixed(2)).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : null,
       })),
       mensagem: `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
-        (rows || []).map((r) =>
-          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`
-        ).join("\n")
+        (rows || []).map((r) => {
+          const preco = r.PrecoRevenda !== null && r.PrecoRevenda !== undefined
+            ? ` - Valor Unitário: R$ ${parseFloat(parseFloat(r.PrecoRevenda).toFixed(2)).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : "";
+          return `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}${preco}`;
+        }).join("\n")
       }.\nPor favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
     });
   } catch (err) {
@@ -213,10 +219,10 @@ app.get("/products/item/:itemCode", async (req, res) => {
     // Por enquanto devolvo "data" com tudo que a procedure retornar.
     // Depois, se você me mandar as colunas, eu mapeio pra um JSON mais limpo.
     const formatted = Object.fromEntries(
-      Object.entries(row).map(([k, v]) => {
-        const num = parseFloat(v);
-        return [k, v !== null && v !== "" && !isNaN(num) ? num.toFixed(2) : v];
-      })
+      Object.entries(row).map(([k, v]) => [
+        k,
+        typeof v === "number" ? parseFloat(v.toFixed(2)) : v,
+      ])
     );
 
     return res.status(200).json({
