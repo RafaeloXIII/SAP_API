@@ -155,46 +155,45 @@ app.post("/customer/lookup", async (req, res) => {
 app.post("/products/search-tires", async (req, res) => {
   try {
     const { medida: medidaRaw } = req.body || {};
-
+ 
     if (!medidaRaw) {
       return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
     }
-
-    // Normaliza: troca "/" por espaço e colapsa espaços extras
-    // Aceita "32 305/25" ou "32 305 25" -> aro="32", medida="305 25"
-    const normalized = String(medidaRaw).replace(/\//g, " ").replace(/\s+/g, " ").trim();
+ 
+    // Normaliza: remove caracteres especiais, troca por espaço e colapsa extras
+    // Aceita "305/25 R32", "305 25 R32", "305/25R32" -> aro="32", medida="305 25"
+    const normalized = String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").replace(/\s+/g, " ").trim();
     const parts = normalized.split(" ");
-
-    if (parts.length < 2 || !/^\d+$/.test(parts[0])) {
+ 
+    if (parts.length < 2) {
       return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
     }
-
-    const aro = parts[0];
-    const medida = parts.slice(1).join(" ");
-
+ 
+    // Aro é o último token (extrai só os dígitos, ex: "R32" -> "32")
+    const aro = parts[parts.length - 1].replace(/\D/g, "");
+    const medida = parts.slice(0, -1).join(" ");
+ 
+    if (!aro || !medida) {
+      return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
+    }
+ 
     const rows = await searchTiresByAroMedida_HANA(aro, medida);
-
+ 
     if (!rows || rows.length === 0) {
       return res.status(404).json({ ok: false, error: "NO_PRODUCTS_FOUND" });
     }
-
+ 
     return res.status(200).json({
       ok: true,
       items: (rows || []).map((r) => ({
         itemCode: r.ItemCode,
         marca: r.U_SX_Marca,
         nome: r.ItemName,
-        valorUnitario: r.PrecoRevenda !== null && r.PrecoRevenda !== undefined
-          ? parseFloat(parseFloat(r.PrecoRevenda).toFixed(2)).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          : null,
       })),
       mensagem: `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
-        (rows || []).map((r) => {
-          const preco = r.PrecoRevenda !== null && r.PrecoRevenda !== undefined
-            ? ` - Valor Unitário: R$ ${parseFloat(parseFloat(r.PrecoRevenda).toFixed(2)).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            : "";
-          return `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}${preco}`;
-        }).join("\n")
+        (rows || []).map((r) =>
+          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`
+        ).join("\n")
       }.\n`,
     });
   } catch (err) {
