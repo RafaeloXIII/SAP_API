@@ -185,16 +185,26 @@ app.post("/products/search-tires", async (req, res) => {
  
     return res.status(200).json({
       ok: true,
-      items: (rows || []).map((r) => ({
-        itemCode: r.ItemCode,
-        marca: r.U_SX_Marca,
-        nome: r.ItemName,
-        valorUnitario: r.PrecoRevenda !== null && r.PrecoRevenda !== undefined
-      })),
+      items: (rows || []).map((r) => {
+        const preco = r.PrecoRevenda != null ? parseFloat(r.PrecoRevenda) : null;
+        const precoFormatado = preco !== null && !isNaN(preco)
+          ? preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : null;
+        return {
+          itemCode: r.ItemCode,
+          marca: r.U_SX_Marca,
+          nome: r.ItemName,
+          valorUnitario: precoFormatado,
+        };
+      }),
       mensagem: `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
-        (rows || []).map((r) =>
-          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName} - Valor Unitário: ${r.PrecoRevenda !== null && r.PrecoRevenda !== undefined ? r.PrecoRevenda.toFixed(2) : "N/A"}`
-        ).join("\n")
+        (rows || []).map((r) => {
+          const preco = r.PrecoRevenda != null ? parseFloat(r.PrecoRevenda) : null;
+          const precoStr = preco !== null && !isNaN(preco)
+            ? `R$ ${preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : "N/A";
+          return `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName} - Valor Unitário: ${precoStr}`;
+        }).join("\n")
       }.\n`,
     });
   } catch (err) {
