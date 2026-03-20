@@ -154,11 +154,23 @@ app.post("/customer/lookup", async (req, res) => {
  */
 app.post("/products/search-tires", async (req, res) => {
   try {
-    const { aro, medida } = req.body || {};
+    const { medida: medidaRaw } = req.body || {};
 
-    if (!aro || !medida) {
+    if (!medidaRaw) {
       return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
     }
+
+    // Normaliza: troca "/" por espaço e colapsa espaços extras
+    // Aceita "32 305/25" ou "32 305 25" -> aro="32", medida="305 25"
+    const normalized = String(medidaRaw).replace(/\//g, " ").replace(/\s+/g, " ").trim();
+    const parts = normalized.split(" ");
+
+    if (parts.length < 2 || !/^\d+$/.test(parts[0])) {
+      return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
+    }
+
+    const aro = parts[0];
+    const medida = parts.slice(1).join(" ");
 
     const rows = await searchTiresByAroMedida_HANA(aro, medida);
 
@@ -173,9 +185,11 @@ app.post("/products/search-tires", async (req, res) => {
         marca: r.U_SX_Marca,
         nome: r.ItemName,
       })),
-      mensagem: `Temos as seguintes opções de pneus para o ${aro} e ${medida} informados:
-      ${(rows || []).map(r => `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`).join('\n')}.
-       Por favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
+      mensagem: `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
+        (rows || []).map((r) =>
+          `Item: ${r.ItemCode} - Marca: ${r.U_SX_Marca} - Nome: ${r.ItemName}`
+        ).join("\n")
+      }.\nPor favor, escolha o código do produto desejado para prosseguirmos com a cotação.`,
     });
   } catch (err) {
     console.error("search tires error:", err);
@@ -199,10 +213,10 @@ app.get("/products/item/:itemCode", async (req, res) => {
     // Por enquanto devolvo "data" com tudo que a procedure retornar.
     // Depois, se você me mandar as colunas, eu mapeio pra um JSON mais limpo.
     const formatted = Object.fromEntries(
-      Object.entries(row).map(([k, v]) => [
-        k,
-        typeof v === "number" ? parseFloat(v.toFixed(2)) : v,
-      ])
+      Object.entries(row).map(([k, v]) => {
+        const num = parseFloat(v);
+        return [k, v !== null && v !== "" && !isNaN(num) ? num.toFixed(2) : v];
+      })
     );
 
     return res.status(200).json({
