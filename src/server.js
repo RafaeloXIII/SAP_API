@@ -200,7 +200,7 @@ app.post("/products/search-tires", async (req, res) => {
       const externalResp = await axios.post(externalUrl, externalBody, {
         params: { token, cnpj },
         headers: { "Content-Type": "application/json" },
-        timeout: 15000,
+        timeout: 150000,
         validateStatus: () => true,
       });
 
