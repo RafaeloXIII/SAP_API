@@ -149,14 +149,14 @@ app.post("/customer/lookup", async (req, res) => {
 });
 
 /**
- * NEW: Search tires by (aro + medida)
- * Returns only: ItemCode + U_SX_Marca
+ * Search tires by (medida + aro)
+ * Busca itens no HANA e preço via API externa (priceaftax)
  */
 app.post("/products/search-tires", async (req, res) => {
   try {
-    const { medida: medidaRaw } = req.body || {};
+    const { medida: medidaRaw, cnpj } = req.body || {};
 
-    if (!medidaRaw) {
+    if (!medidaRaw || !cnpj) {
       return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
     }
 
@@ -177,16 +177,49 @@ app.post("/products/search-tires", async (req, res) => {
       return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
     }
 
+    // 1) Busca itens no HANA
     const rows = await searchTiresByAroMedida_HANA(aro, medida);
 
     if (!rows || rows.length === 0) {
       return res.status(404).json({ ok: false, error: "NO_PRODUCTS_FOUND" });
     }
 
-    return res.status(200).json({
-      ok: true,
-      items: (rows || []).map((r) => {
-        const preco = r.PrecoRevenda != null ? parseFloat(r.PrecoRevenda) : null;
+    // 2) Chama API externa para obter preços (priceaftax)
+    const baseUrl = process.env.EXTERNAL_BASE_URL;
+    const token = process.env.EXTERNAL_TOKEN;
+
+    if (!baseUrl || !token) {
+      return res.status(500).json({ ok: false, error: "MISSING_EXTERNAL_CONFIG" });
+    }
+
+    const externalUrl = `${baseUrl.replace(/\/+$/, "")}/crmb1/server/api/Order/PostNewQuotationByCNPJ`;
+    const externalBody = rows.map((r) => ({ itemcode: r.ItemCode, quantity: 1 }));
+
+    let priceMap = {};
+    try {
+      const externalResp = await axios.post(externalUrl, externalBody, {
+        params: { token, cnpj },
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+        validateStatus: () => true,
+      });
+
+      if (externalResp.status >= 200 && externalResp.status < 300 && Array.isArray(externalResp.data?.items)) {
+        for (const item of externalResp.data.items) {
+          if (item.itemcode && item.priceaftax != null) {
+            priceMap[item.itemcode] = item.priceaftax;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("external price api error:", e);
+      // continua sem preço se a API externa falhar
+    }
+
+    // 3) Monta retorno cruzando preços — filtra itens com preco 0 ou sem preço
+    const items = rows
+      .map((r) => {
+        const preco = priceMap[r.ItemCode] != null ? parseFloat(priceMap[r.ItemCode]) : null;
         const precoFormatado = preco !== null && !isNaN(preco)
           ? preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
           : null;
@@ -195,20 +228,24 @@ app.post("/products/search-tires", async (req, res) => {
           marca: r.U_SX_Marca,
           nome: r.ItemName,
           valorUnitario: precoFormatado,
+          _preco: preco,
         };
-      }),
-      mensagem: `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
-        (rows || []).map((r) => {
-          const preco = r.PrecoRevenda != null ? parseFloat(r.PrecoRevenda) : null;
-          const precoStr = preco !== null && !isNaN(preco)
-            ? `R$ ${preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            : "N/A";
-          // Corta tudo até após ZRxx ou Rxx + índice de carga: '13" 175 70 R13 82T ' -> 'REFLEX RH01'
-          const nomeSimples = r.ItemName.replace(/^.*?Z?R\d+\s+/i, "").trim();
-          return `${r.U_SX_Marca} - ${nomeSimples}\nPreço Unitário: ${precoStr}\n`;
-        }).join("\n")
-      }`,
-    });
+      })
+      .filter((r) => r._preco !== null && r._preco > 0)
+      .map(({ _preco, ...r }) => r);
+
+    if (items.length === 0) {
+      return res.status(404).json({ ok: false, error: "NO_PRODUCTS_FOUND" });
+    }
+
+    const mensagem = `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
+      items.map((r) => {
+        const nomeSimples = r.nome.replace(/^.*?Z?R\d+\s+/i, "").trim();
+        return `${r.marca} - ${nomeSimples}\nPreço Unitário: R$ ${r.valorUnitario}\n`;
+      }).join("\n")
+    }`;
+
+    return res.status(200).json({ ok: true, items, mensagem });
   } catch (err) {
     console.error("search tires error:", err);
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });

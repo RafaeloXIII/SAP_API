@@ -87,16 +87,11 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
   const medidaPattern = `% ${medida} %`;
 
   const sql = `
-    SELECT
+    SELECT DISTINCT
       T0."ItemCode",
       T0."U_SX_Marca",
-      T0."ItemName",
-      MAX(CASE WHEN T2."ListName" = 'Revenda' THEN T1."Price" END) AS "PrecoRevenda"
+      T0."ItemName"
     FROM OITM T0
-    LEFT JOIN ITM1 T1 
-      ON T1."ItemCode" = T0."ItemCode"
-    LEFT JOIN OPLN T2 
-      ON T2."ListNum" = T1."PriceList"
     WHERE
       T0."ItemName" LIKE ?
       AND T0."ItemName" LIKE ?
@@ -108,12 +103,6 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
         108, 109, 110, 111, 112, 149, 113, 114,
         115, 116, 117, 118, 119, 120, 121, 122
       )
-    GROUP BY
-      T0."ItemCode",
-      T0."U_SX_Marca",
-      T0."ItemName"
-    HAVING
-      COALESCE(MAX(CASE WHEN T2."ListName" = 'Revenda' THEN T1."Price" END), 0) > 0
     ORDER BY
       T0."U_SX_Marca",
       T0."ItemCode"
