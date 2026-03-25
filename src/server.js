@@ -150,60 +150,50 @@ app.post("/customer/lookup", async (req, res) => {
 
 /**
  * Search tires by (medida + aro)
- * Busca itens no HANA e preço via API externa (priceaftax)
+ * Responde 200 imediatamente e processa em background,
+ * enviando o resultado para o webhook do Octadesk (e opcionalmente um webhook de teste).
+ *
+ * .env necessários:
+ *   EXTERNAL_BASE_URL, EXTERNAL_TOKEN
+ *   TEST_WEBHOOK_URL (opcional — se definido, recebe uma cópia do payload)
+ *
+ * Webhook Octadesk:
+ *   https://o173318-ae2.api001.octadesk.services/chat/external-webhook/.../{{conversaId}}
  */
-app.post("/products/search-tires", async (req, res) => {
-  try {
-    const { medida: medidaRaw, cnpj } = req.body || {};
+async function processTireSearch({ conversaId, medidaRaw, cnpj }) {
+  // Normaliza entrada
+  const normalized = String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").replace(/\s+/g, " ").trim();
+  const parts = normalized.split(" ");
+  const aro = parts[parts.length - 1].replace(/\D/g, "");
+  const medida = parts.slice(0, -1).join(" ");
 
-    if (!medidaRaw || !cnpj) {
-      return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
-    }
+  const buildPayload = (ok, data) => ({ ok, conversaId, ...data });
 
-    // Normaliza: remove caracteres especiais, troca por espaço e colapsa extras
-    // Aceita "305/25 R32", "305 25 R32", "305/25R32" -> aro="32", medida="305 25"
-    const normalized = String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").replace(/\s+/g, " ").trim();
-    const parts = normalized.split(" ");
+  if (!aro || !medida) {
+    return buildPayload(false, { error: "INVALID_FORMAT" });
+  }
 
-    if (parts.length < 2) {
-      return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
-    }
+  // 1) Busca itens no HANA
+  const rows = await searchTiresByAroMedida_HANA(aro, medida);
+  if (!rows || rows.length === 0) {
+    return buildPayload(false, { error: "NO_PRODUCTS_FOUND" });
+  }
 
-    // Aro é o último token (extrai só os dígitos, ex: "R32" -> "32")
-    const aro = parts[parts.length - 1].replace(/\D/g, "");
-    const medida = parts.slice(0, -1).join(" ");
+  // 2) Chama API externa para obter preços (priceaftax)
+  const baseUrl = process.env.EXTERNAL_BASE_URL;
+  const token = process.env.EXTERNAL_TOKEN;
 
-    if (!aro || !medida) {
-      return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
-    }
-
-    // 1) Busca itens no HANA
-    const rows = await searchTiresByAroMedida_HANA(aro, medida);
-
-    if (!rows || rows.length === 0) {
-      return res.status(404).json({ ok: false, error: "NO_PRODUCTS_FOUND" });
-    }
-
-    // 2) Chama API externa para obter preços (priceaftax)
-    const baseUrl = process.env.EXTERNAL_BASE_URL;
-    const token = process.env.EXTERNAL_TOKEN;
-
-    if (!baseUrl || !token) {
-      return res.status(500).json({ ok: false, error: "MISSING_EXTERNAL_CONFIG" });
-    }
-
-    const externalUrl = `${baseUrl.replace(/\/+$/, "")}/crmb1/server/api/Order/PostNewQuotationByCNPJ`;
-    const externalBody = rows.map((r) => ({ itemcode: r.ItemCode, quantity: 1 }));
-
-    let priceMap = {};
+  let priceMap = {};
+  if (baseUrl && token) {
     try {
+      const externalUrl = `${baseUrl.replace(/\/+$/, "")}/crmb1/server/api/Order/PostNewQuotationByCNPJ`;
+      const externalBody = rows.map((r) => ({ itemcode: r.ItemCode, quantity: 1 }));
       const externalResp = await axios.post(externalUrl, externalBody, {
         params: { token, cnpj },
         headers: { "Content-Type": "application/json" },
         timeout: 150000,
         validateStatus: () => true,
       });
-
       if (externalResp.status >= 200 && externalResp.status < 300 && Array.isArray(externalResp.data?.items)) {
         for (const item of externalResp.data.items) {
           if (item.itemcode && item.priceaftax != null) {
@@ -213,39 +203,77 @@ app.post("/products/search-tires", async (req, res) => {
       }
     } catch (e) {
       console.error("external price api error:", e);
-      // continua sem preço se a API externa falhar
+    }
+  }
+
+  // 3) Cruza preços e filtra itens com preço 0 ou ausente
+  const items = rows
+    .map((r) => {
+      const preco = priceMap[r.ItemCode] != null ? parseFloat(priceMap[r.ItemCode]) : null;
+      const precoFormatado = preco !== null && !isNaN(preco)
+        ? preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : null;
+      return { itemCode: r.ItemCode, marca: r.U_SX_Marca, nome: r.ItemName, valorUnitario: precoFormatado, _preco: preco };
+    })
+    .filter((r) => r._preco !== null && r._preco > 0)
+    .map(({ _preco, ...r }) => r);
+
+  if (items.length === 0) {
+    return buildPayload(false, { error: "NO_PRODUCTS_FOUND" });
+  }
+
+  const mensagem = `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
+    items.map((r) => {
+      const nomeSimples = r.nome.replace(/^.*?Z?R\d+\s+/i, "").trim();
+      return `${r.marca} - ${nomeSimples}\nPreço Unitário: R$ ${r.valorUnitario}\n`;
+    }).join("\n")
+  }`;
+
+  return buildPayload(true, { items, mensagem });
+}
+
+async function dispatchWebhooks(conversaId, payload) {
+  const octadeskBase = "https://o173318-ae2.api001.octadesk.services/chat/external-webhook/o173318-ae2/cmm3ispt30004ja0rgj4b3uix/cmn5zev3q0006356yz0tsu6v8";
+  const octadeskUrl = `${octadeskBase}/${conversaId}`;
+  const testUrl = process.env.TEST_WEBHOOK_URL || null;
+
+  const targets = [octadeskUrl];
+  if (testUrl) targets.push(testUrl);
+
+  await Promise.allSettled(
+    targets.map((url) =>
+      axios.post(url, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+      }).catch((e) => console.error(`webhook error [${url}]:`, e.message))
+    )
+  );
+}
+
+app.post("/products/search-tires", async (req, res) => {
+  try {
+    const { medida: medidaRaw, cnpj, conversaId } = req.body || {};
+
+    if (!medidaRaw || !cnpj || !conversaId) {
+      return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
     }
 
-    // 3) Monta retorno cruzando preços — filtra itens com preco 0 ou sem preço
-    const items = rows
-      .map((r) => {
-        const preco = priceMap[r.ItemCode] != null ? parseFloat(priceMap[r.ItemCode]) : null;
-        const precoFormatado = preco !== null && !isNaN(preco)
-          ? preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          : null;
-        return {
-          itemCode: r.ItemCode,
-          marca: r.U_SX_Marca,
-          nome: r.ItemName,
-          valorUnitario: precoFormatado,
-          _preco: preco,
-        };
-      })
-      .filter((r) => r._preco !== null && r._preco > 0)
-      .map(({ _preco, ...r }) => r);
-
-    if (items.length === 0) {
-      return res.status(404).json({ ok: false, error: "NO_PRODUCTS_FOUND" });
+    if (String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").trim().split(" ").length < 2) {
+      return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
     }
 
-    const mensagem = `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
-      items.map((r) => {
-        const nomeSimples = r.nome.replace(/^.*?Z?R\d+\s+/i, "").trim();
-        return `${r.marca} - ${nomeSimples}\nPreço Unitário: R$ ${r.valorUnitario}\n`;
-      }).join("\n")
-    }`;
+    // Responde imediatamente
+    res.status(200).json({ ok: true });
 
-    return res.status(200).json({ ok: true, items, mensagem });
+    // Processa em background e dispara webhook — em caso de erro também notifica
+    processTireSearch({ conversaId, medidaRaw, cnpj })
+      .then((payload) => dispatchWebhooks(conversaId, payload))
+      .catch((err) => {
+        console.error("background tire search error:", err);
+        dispatchWebhooks(conversaId, { ok: false, conversaId, error: "INTERNAL_ERROR" })
+          .catch((e) => console.error("webhook dispatch error:", e));
+      });
+
   } catch (err) {
     console.error("search tires error:", err);
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
