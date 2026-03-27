@@ -46,30 +46,33 @@ export async function getCardCodeByCNPJ_HANA(cnpjInput) {
   // 1) tenta exatamente como está gravado (muitas bases guardam com máscara)
   const rowExact = await queryOne(
     `
-    SELECT T0."CardCode"
+    SELECT T0."CardCode", T2."Mobil"
     FROM CRD7 T0
     JOIN OCRD T1 ON T1."CardCode" = T0."CardCode"
+    LEFT JOIN OSLP T2 ON T2."SlpCode" = T1."SlpCode"
     WHERE T0."TaxId0" = ?
     LIMIT 1
   `,
     [formatted]
   );
 
-  if (rowExact?.CardCode) return rowExact.CardCode;
+  if (rowExact?.CardCode) return { cardCode: rowExact.CardCode, mobil: rowExact.Mobil || null };
 
   // 2) tenta comparar só dígitos (caso esteja sem máscara no banco)
   const rowDigits = await queryOne(
     `
-    SELECT T0."CardCode"
+    SELECT T0."CardCode", T2."Mobil"
     FROM CRD7 T0
     JOIN OCRD T1 ON T1."CardCode" = T0."CardCode"
+    LEFT JOIN OSLP T2 ON T2."SlpCode" = T1."SlpCode"
     WHERE REPLACE(REPLACE(REPLACE(T0."TaxId0",'.',''),'/',''),'-','') = ?
     LIMIT 1
   `,
     [digits]
   );
 
-  return rowDigits?.CardCode || null;
+  if (rowDigits?.CardCode) return { cardCode: rowDigits.CardCode, mobil: rowDigits.Mobil || null };
+  return null;
 }
 
 export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
@@ -87,26 +90,55 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
   const medidaPattern = `% ${medida} %`;
 
   const sql = `
-    SELECT DISTINCT
-      T0."ItemCode",
-      T0."U_SX_Marca",
-      T0."ItemName"
+    SELECT
+        T0."ItemCode",
+        T0."U_SX_Marca",
+        T0."ItemName",
+        SUM(IFNULL(T1."OnHand", 0) - IFNULL(T1."IsCommited", 0)) AS "Estoque Total"
     FROM OITM T0
+    INNER JOIN OITW T1
+        ON T1."ItemCode" = T0."ItemCode"
     WHERE
-      T0."ItemName" LIKE ?
-      AND T0."ItemName" LIKE ?
-      AND IFNULL(T0."U_SX_Marca", '') <> ''
-      AND T0."SellItem" = 'Y'
-      AND T0."MatType" = 0
-      AND T0."ItmsGrpCod" IN (
-        146, 145, 103, 104, 105, 106, 107, 144,
-        108, 109, 110, 111, 112, 149, 113, 114,
-        115, 116, 117, 118, 119, 120, 121, 122
-      )
+        T0."ItemName" LIKE ?
+        AND T0."ItemName" LIKE ?
+        AND IFNULL(T0."U_SX_Marca", '') <> ''
+        AND T0."SellItem" = 'Y'
+        AND T0."MatType" = 0
+        AND T0."ItmsGrpCod" IN (
+            146, 145, 103, 104, 105, 106, 107, 144,
+            108, 109, 110, 111, 112, 149, 113, 114,
+            115, 116, 117, 118, 119, 120, 121, 122
+        )
+        AND T1."WhsCode" IN (
+            'AWSBA001',
+            'AWSCE001',
+            'AWSDF001',
+            'AWSES001',
+            'AWSGO001',
+            'AWSMG001',
+            'AWSMS001',
+            'AWSMT001',
+            'AWSPCA01',
+            'AWSPE001',
+            'AWSPR001',
+            'AWSRJ010',
+            'AWSRS001',
+            'AWSSC001',
+            'AWSSJRP1',
+            'AWSSP001',
+            'AWSUB001',
+            'IMP-001'
+        )
+    GROUP BY
+        T0."ItemCode",
+        T0."U_SX_Marca",
+        T0."ItemName"
+    HAVING
+        SUM(IFNULL(T1."OnHand", 0) - IFNULL(T1."IsCommited", 0)) > 10
     ORDER BY
-      T0."U_SX_Marca",
-      T0."ItemCode"
-    LIMIT 100
+        T0."U_SX_Marca",
+        T0."ItemCode"
+    LIMIT 100;
   `;
 
   const rows = await queryAll(sql, [aroPattern, medidaPattern]);

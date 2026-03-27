@@ -119,28 +119,23 @@ app.get("/health", (req, res) => {
 app.post("/customer/lookup", async (req, res) => {
   try {
     const cnpj = req.body?.cnpj;
-    const conversationId = req.body?.conversationId;
 
     const digits = normalizeCNPJNumeric(cnpj);
     if (digits.length !== 14) {
       return res.status(400).json({ ok: false, error: "INVALID_CNPJ" });
     }
 
-    const cardCode = await getCardCodeByCNPJ_HANA(digits);
+    const result = await getCardCodeByCNPJ_HANA(digits);
 
-    if (!cardCode) {
-      return res.status(404).json({
-        ok: true,
-        exists: false,
-        conversationId: conversationId || null,
-      });
+    if (!result) {
+      return res.status(404).json({ ok: true, exists: false });
     }
 
     return res.status(200).json({
       ok: true,
       exists: true,
-      cardCode,
-      conversationId: conversationId || null,
+      cardCode: result.cardCode,
+      mobil: result.mobil,
     });
   } catch (err) {
     console.error("lookup error:", err);
@@ -213,7 +208,7 @@ async function processTireSearch({ conversaId, medidaRaw, cnpj }) {
       const precoFormatado = preco !== null && !isNaN(preco)
         ? preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : null;
-      return { itemCode: r.ItemCode, marca: r.U_SX_Marca, nome: r.ItemName, valorUnitario: precoFormatado, _preco: preco };
+      return { itemCode: r.ItemCode, marca: r.U_SX_Marca, nome: r.ItemName, estoque: r["Estoque Total"], valorUnitario: precoFormatado, _preco: preco };
     })
     .filter((r) => r._preco !== null && r._preco > 0)
     .map(({ _preco, ...r }) => r);
