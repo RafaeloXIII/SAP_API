@@ -75,7 +75,7 @@ export async function getCardCodeByCNPJ_HANA(cnpjInput) {
   return null;
 }
 
-export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
+export async function searchTiresByAroMedida_HANA(aroInput, medidaInput, cardCodeInput = "") {
   const aro = String(aroInput || "").replace(/\D/g, "");
   if (!aro) return [];
 
@@ -85,6 +85,8 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
     .trim();
 
   if (!medida) return [];
+
+  const cardCode = String(cardCodeInput || "").trim();
 
   const aroPattern = `${aro}" %`;
   const medidaPattern = `% ${medida} %`;
@@ -129,19 +131,28 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput) {
             'AWSUB001',
             'IMP-001'
         )
+        AND NOT (
+            UPPER(IFNULL(T0."U_SX_Marca", '')) = 'CONTINENTAL'
+            AND EXISTS (
+                SELECT 1
+                FROM OCRD C
+                WHERE C."CardCode" = ?
+                  AND C."State2" IN ('PR', 'MT')
+            )
+        )
     GROUP BY
         T0."ItemCode",
         T0."U_SX_Marca",
         T0."ItemName"
     HAVING
-        SUM(IFNULL(T1."OnHand", 0) - IFNULL(T1."IsCommited", 0)) > 10
+        SUM(IFNULL(T1."OnHand", 0) - IFNULL(T1."IsCommited", 0)) > 4
     ORDER BY
         T0."U_SX_Marca",
         T0."ItemCode"
-    LIMIT 100;
+    LIMIT 100
   `;
 
-  const rows = await queryAll(sql, [aroPattern, medidaPattern]);
+  const rows = await queryAll(sql, [aroPattern, medidaPattern, cardCode]);
   return rows || [];
 }
 

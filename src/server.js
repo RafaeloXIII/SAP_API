@@ -155,7 +155,7 @@ app.post("/customer/lookup", async (req, res) => {
  * Webhook Octadesk:
  *   https://o173318-ae2.api001.octadesk.services/chat/external-webhook/.../{{conversaId}}
  */
-async function processTireSearch({ conversaId, medidaRaw, cnpj }) {
+async function processTireSearch({ conversaId, medidaRaw, cnpj, cardCode }) {
   // Normaliza entrada
   const normalized = String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").replace(/\s+/g, " ").trim();
   const parts = normalized.split(" ");
@@ -169,7 +169,7 @@ async function processTireSearch({ conversaId, medidaRaw, cnpj }) {
   }
 
   // 1) Busca itens no HANA
-  const rows = await searchTiresByAroMedida_HANA(aro, medida);
+  const rows = await searchTiresByAroMedida_HANA(aro, medida, cardCode);
   if (!rows || rows.length === 0) {
     return buildPayload(false, { error: "NO_PRODUCTS_FOUND" });
   }
@@ -247,9 +247,9 @@ async function dispatchWebhooks(conversaId, payload) {
 
 app.post("/products/search-tires", async (req, res) => {
   try {
-    const { medida: medidaRaw, cnpj, conversaId } = req.body || {};
+    const { medida: medidaRaw, cnpj, conversaId, cardCode } = req.body || {};
 
-    if (!medidaRaw || !cnpj || !conversaId) {
+    if (!medidaRaw || !cnpj || !conversaId || !cardCode) {
       return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
     }
 
@@ -261,7 +261,7 @@ app.post("/products/search-tires", async (req, res) => {
     res.status(200).json({ ok: true });
 
     // Processa em background e dispara webhook — em caso de erro também notifica
-    processTireSearch({ conversaId, medidaRaw, cnpj })
+    processTireSearch({ conversaId, medidaRaw, cnpj, cardCode })
       .then((payload) => dispatchWebhooks(conversaId, payload))
       .catch((err) => {
         console.error("background tire search error:", err);
