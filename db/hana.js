@@ -131,15 +131,15 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput, cardCod
             'AWSUB001',
             'IMP-001'
         )
-        AND NOT (
-            UPPER(IFNULL(T0."U_SX_Marca", '')) = 'CONTINENTAL'
-            AND EXISTS (
-                SELECT 1
-                FROM OCRD C
-                WHERE C."CardCode" = ?
-                  AND C."State2" IN ('PR', 'MT')
-            )
-        )
+          AND NOT (
+              UPPER(IFNULL(T0."U_SX_Marca", '')) = 'CONTINENTAL'
+              AND EXISTS (
+                  SELECT 1
+                  FROM OCRD C
+                  WHERE C."CardCode" = ?
+                    AND IFNULL(C."State2", '') NOT IN ('PR', 'MT')
+              )
+          )
     GROUP BY
         T0."ItemCode",
         T0."U_SX_Marca",
