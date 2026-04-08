@@ -1,6 +1,7 @@
 import hanaClient from '@sap/hana-client';
 import { HANA } from '../config/env.js';
 import { normalizeCNPJNumeric, formatCNPJMask } from '../utils/cnpj.js';
+import { parseTireSearch } from '../utils/tire-search.js';
 
 function connParams() {
   const p = {
@@ -75,21 +76,24 @@ export async function getCardCodeByCNPJ_HANA(cnpjInput) {
   return null;
 }
 
-export async function searchTiresByAroMedida_HANA(aroInput, medidaInput, cardCodeInput = "") {
-  const aro = String(aroInput || "").replace(/\D/g, "");
+export async function searchTiresByAroMedida_HANA(searchInput, cardCodeInput = "") {
+  const parsedSearch = typeof searchInput === "string" ? parseTireSearch(searchInput) : searchInput;
+  if (!parsedSearch?.aro || !Array.isArray(parsedSearch.searchPatterns) || parsedSearch.searchPatterns.length === 0) {
+    return [];
+  }
+
+  const aro = String(parsedSearch.aro).replace(/\D/g, "");
   if (!aro) return [];
 
-  const medida = String(medidaInput || "")
-    .replace(/\//g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!medida) return [];
-
   const cardCode = String(cardCodeInput || "").trim();
-
   const aroPattern = `${aro}" %`;
-  const medidaPattern = `% ${medida} %`;
+  const normalizedPatterns = [...new Set(parsedSearch.searchPatterns.map((pattern) => `%${pattern}%`))];
+  const normalizedItemNameSql = `
+        UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(IFNULL(T0."ItemName", ''), ' ', ''), '/', ''), '"', ''), '.', ''), ',', ''), '-', ''))
+  `;
+  const normalizedPatternClause = normalizedPatterns
+    .map(() => `${normalizedItemNameSql} LIKE ?`)
+    .join("\n        OR ");
 
   const sql = `
     SELECT
@@ -102,7 +106,9 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput, cardCod
         ON T1."ItemCode" = T0."ItemCode"
     WHERE
         T0."ItemName" LIKE ?
-        AND T0."ItemName" LIKE ?
+        AND (
+        ${normalizedPatternClause}
+        )
         AND IFNULL(T0."U_SX_Marca", '') <> ''
         AND T0."SellItem" = 'Y'
         AND T0."MatType" = 0
@@ -152,7 +158,7 @@ export async function searchTiresByAroMedida_HANA(aroInput, medidaInput, cardCod
     LIMIT 100
   `;
 
-  const rows = await queryAll(sql, [aroPattern, medidaPattern, cardCode]);
+  const rows = await queryAll(sql, [aroPattern, ...normalizedPatterns, cardCode]);
   return rows || [];
 }
 

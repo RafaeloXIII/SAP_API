@@ -6,8 +6,22 @@ import axios from "axios";
 import { APP } from "../config/env.js";
 import { getCardCodeByCNPJ_HANA, searchTiresByAroMedida_HANA, getTireByItemCode_HANA,getProductInfoFromProc_HANA} from "../db/hana.js";
 import { normalizeCNPJNumeric } from "../utils/cnpj.js";
+import { parseTireSearch } from "../utils/tire-search.js";
 
 const app = express();
+
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Webhook-Token");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 
 /**
@@ -156,20 +170,17 @@ app.post("/customer/lookup", async (req, res) => {
  *   https://o173318-ae2.api001.octadesk.services/chat/external-webhook/.../{{conversaId}}
  */
 async function processTireSearch({ conversaId, medidaRaw, cnpj, cardCode }) {
-  // Normaliza entrada
-  const normalized = String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").replace(/\s+/g, " ").trim();
-  const parts = normalized.split(" ");
-  const aro = parts[parts.length - 1].replace(/\D/g, "");
-  const medida = parts.slice(0, -1).join(" ");
-
   const buildPayload = (ok, data) => ({ ok, conversaId, ...data });
+  const parsedSearch = parseTireSearch(medidaRaw);
 
-  if (!aro || !medida) {
+  if (!parsedSearch?.aro || !parsedSearch?.medida) {
     return buildPayload(false, { error: "INVALID_FORMAT" });
   }
 
+  const { aro, medida } = parsedSearch;
+
   // 1) Busca itens no HANA
-  const rows = await searchTiresByAroMedida_HANA(aro, medida, cardCode);
+  const rows = await searchTiresByAroMedida_HANA(parsedSearch, cardCode);
   if (!rows || rows.length === 0) {
     return buildPayload(false, { error: "NO_PRODUCTS_FOUND" });
   }
@@ -186,7 +197,6 @@ async function processTireSearch({ conversaId, medidaRaw, cnpj, cardCode }) {
       const externalResp = await axios.post(externalUrl, externalBody, {
         params: { token, cnpj },
         headers: { "Content-Type": "application/json" },
-        timeout: 150000,
         validateStatus: () => true,
       });
       if (externalResp.status >= 200 && externalResp.status < 300 && Array.isArray(externalResp.data?.items)) {
@@ -253,7 +263,7 @@ app.post("/products/search-tires", async (req, res) => {
       return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
     }
 
-    if (String(medidaRaw).replace(/[^0-9a-zA-Z]+/g, " ").trim().split(" ").length < 2) {
+    if (!parseTireSearch(medidaRaw)) {
       return res.status(400).json({ ok: false, error: "INVALID_FORMAT" });
     }
 
