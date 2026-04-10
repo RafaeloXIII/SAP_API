@@ -76,6 +76,28 @@ function sanitizeBody(path, body) {
   return { keys: Object.keys(b) };
 }
 
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+
+function formatTireDisplayName(item) {
+  const rawName = normalizeText(item.nome);
+  if (!rawName) {
+    return normalizeText(item.itemCode) || "Pneu sem descricao";
+  }
+
+  const simplified = rawName.replace(/^.*?Z?R\d+\s+/i, "").trim();
+  return simplified || rawName;
+}
+
+function formatTireMessageLine(item) {
+  const brand = normalizeText(item.marca) || "Marca nao informada";
+  const name = formatTireDisplayName(item);
+  const price = normalizeText(item.valorUnitario) || "sob consulta";
+
+  return `${brand} - ${name}\nPreco Unitario: R$ ${price}\n`;
+}
+
 app.use((req, res, next) => {
   const requestId = crypto.randomUUID();
   req.requestId = requestId;
@@ -252,14 +274,26 @@ async function processTireSearch({ conversaId, medidaRaw, cnpj, cardCode }) {
       const precoFormatado = preco !== null && !isNaN(preco)
         ? preco.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : null;
-      return { itemCode: r.ItemCode, marca: r.U_SX_Marca, nome: r.ItemName, estoque: r["Estoque Total"], valorUnitario: precoFormatado, _preco: preco };
+      return {
+        itemCode: normalizeText(r.ItemCode) || null,
+        marca: normalizeText(r.U_SX_Marca) || null,
+        nome: normalizeText(r.ItemName) || null,
+        estoque: r["Estoque Total"],
+        valorUnitario: precoFormatado,
+        _preco: preco,
+      };
     })
-    .filter((r) => r._preco !== null && r._preco > 0)
+    .filter((r) => r.itemCode && r._preco !== null && r._preco > 0)
     .map(({ _preco, ...r }) => r);
 
   if (items.length === 0) {
     return buildPayload(false, { error: "NO_PRODUCTS_FOUND" });
   }
+  const safeMessageLines = items.map((r) => formatTireMessageLine(r)).join("\n");
+  return buildPayload(true, {
+    items,
+    mensagem: `Temos as seguintes opcoes de pneus para o aro ${aro} e medida ${medida} informados:\n${safeMessageLines}`,
+  });
 
   const mensagem = `Temos as seguintes opções de pneus para o aro ${aro} e medida ${medida} informados:\n${
     items.map((r) => {

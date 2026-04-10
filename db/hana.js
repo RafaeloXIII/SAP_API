@@ -96,6 +96,7 @@ export async function getContactsByPhone_HANA(phoneInput) {
       T0."Name",
       T0."CardCode",
       T1."CardName",
+      T2."Mobil",
       T0."Position",
       T0."Tel1",
       T0."Tel2",
@@ -108,6 +109,7 @@ export async function getContactsByPhone_HANA(phoneInput) {
       END AS "MatchedField"
     FROM OCPR T0
     LEFT JOIN OCRD T1 ON T1."CardCode" = T0."CardCode"
+    LEFT JOIN OSLP T2 ON T2."SlpCode" = T1."SlpCode"
     WHERE
       ${cellolarSql} IN (${inPlaceholders})
       OR ${tel1Sql} IN (${inPlaceholders})
@@ -133,6 +135,7 @@ export async function getContactsByPhone_HANA(phoneInput) {
     name: row.Name,
     cardCode: row.CardCode,
     cardName: row.CardName || null,
+    mobil: row.Mobil || null,
     position: row.Position || null,
     matchedField: row.MatchedField || null,
     phones: {
