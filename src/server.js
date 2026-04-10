@@ -4,8 +4,9 @@ import crypto from "crypto";
 import axios from "axios";
 
 import { APP } from "../config/env.js";
-import { getCardCodeByCNPJ_HANA, searchTiresByAroMedida_HANA, getTireByItemCode_HANA,getProductInfoFromProc_HANA} from "../db/hana.js";
+import { getCardCodeByCNPJ_HANA, getContactsByPhone_HANA, searchTiresByAroMedida_HANA, getTireByItemCode_HANA,getProductInfoFromProc_HANA} from "../db/hana.js";
 import { normalizeCNPJNumeric } from "../utils/cnpj.js";
+import { maskPhone, normalizePhoneDigits } from "../utils/phone.js";
 import { parseTireSearch } from "../utils/tire-search.js";
 
 const app = express();
@@ -41,9 +42,14 @@ function sanitizeBody(path, body) {
   const b = body ? { ...body } : {};
 
   if (b.cnpj) b.cnpj = maskCnpj(b.cnpj);
+  if (b.phone) b.phone = maskPhone(b.phone);
 
   if (path === "/customer/lookup") {
     return { cnpj: b.cnpj, conversationId: b.conversationId };
+  }
+
+  if (path === "/contact/lookup-phone") {
+    return { phone: b.phone, conversationId: b.conversationId };
   }
 
   if (path === "/products/search-tires") {
@@ -89,6 +95,7 @@ app.use((req, res, next) => {
 
     const interestingPaths = [
       "/customer/lookup",
+      "/contact/lookup-phone",
       "/products/search-tires",
       "/budget/start",
       "/budget/webhook",
@@ -153,6 +160,33 @@ app.post("/customer/lookup", async (req, res) => {
     });
   } catch (err) {
     console.error("lookup error:", err);
+    return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
+  }
+});
+
+app.post("/contact/lookup-phone", async (req, res) => {
+  try {
+    const phone = req.body?.phone;
+    const digits = normalizePhoneDigits(phone);
+
+    if (digits.length < 8) {
+      return res.status(400).json({ ok: false, error: "INVALID_PHONE" });
+    }
+
+    const matches = await getContactsByPhone_HANA(digits);
+
+    if (!matches.length) {
+      return res.status(404).json({ ok: true, exists: false, count: 0 });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      exists: true,
+      count: matches.length,
+      matches,
+    });
+  } catch (err) {
+    console.error("phone lookup error:", err);
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
   }
 });

@@ -1,6 +1,7 @@
 import hanaClient from '@sap/hana-client';
 import { HANA } from '../config/env.js';
 import { normalizeCNPJNumeric, formatCNPJMask } from '../utils/cnpj.js';
+import { buildPhoneLookupCandidates } from '../utils/phone.js';
 import { parseTireSearch } from '../utils/tire-search.js';
 
 function connParams() {
@@ -35,6 +36,10 @@ async function queryAll(sql, params = []) {
   } finally {
     try { conn.disconnect(); } catch {}
   }
+}
+
+function normalizedPhoneSql(columnRef) {
+  return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(IFNULL(${columnRef}, ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '/', ''), '.', '')`;
 }
 
 export async function getCardCodeByCNPJ_HANA(cnpjInput) {
@@ -74,6 +79,68 @@ export async function getCardCodeByCNPJ_HANA(cnpjInput) {
 
   if (rowDigits?.CardCode) return { cardCode: rowDigits.CardCode, mobil: rowDigits.Mobil || null };
   return null;
+}
+
+export async function getContactsByPhone_HANA(phoneInput) {
+  const candidates = buildPhoneLookupCandidates(phoneInput);
+  if (!candidates.length) return [];
+
+  const tel1Sql = normalizedPhoneSql('T0."Tel1"');
+  const tel2Sql = normalizedPhoneSql('T0."Tel2"');
+  const cellolarSql = normalizedPhoneSql('T0."Cellolar"');
+  const inPlaceholders = candidates.map(() => '?').join(', ');
+
+  const sql = `
+    SELECT
+      T0."CntctCode",
+      T0."Name",
+      T0."CardCode",
+      T1."CardName",
+      T0."Position",
+      T0."Tel1",
+      T0."Tel2",
+      T0."Cellolar",
+      CASE
+        WHEN ${cellolarSql} IN (${inPlaceholders}) THEN 'Cellolar'
+        WHEN ${tel1Sql} IN (${inPlaceholders}) THEN 'Tel1'
+        WHEN ${tel2Sql} IN (${inPlaceholders}) THEN 'Tel2'
+        ELSE NULL
+      END AS "MatchedField"
+    FROM OCPR T0
+    LEFT JOIN OCRD T1 ON T1."CardCode" = T0."CardCode"
+    WHERE
+      ${cellolarSql} IN (${inPlaceholders})
+      OR ${tel1Sql} IN (${inPlaceholders})
+      OR ${tel2Sql} IN (${inPlaceholders})
+    ORDER BY
+      T0."CardCode",
+      T0."Name"
+    LIMIT 20
+  `;
+
+  const params = [
+    ...candidates,
+    ...candidates,
+    ...candidates,
+    ...candidates,
+    ...candidates,
+    ...candidates,
+  ];
+  const rows = await queryAll(sql, params);
+
+  return rows.map((row) => ({
+    cntctCode: row.CntctCode,
+    name: row.Name,
+    cardCode: row.CardCode,
+    cardName: row.CardName || null,
+    position: row.Position || null,
+    matchedField: row.MatchedField || null,
+    phones: {
+      tel1: row.Tel1 || null,
+      tel2: row.Tel2 || null,
+      cellolar: row.Cellolar || null,
+    },
+  }));
 }
 
 export async function searchTiresByAroMedida_HANA(searchInput, cardCodeInput = "") {
